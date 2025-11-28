@@ -1,474 +1,1044 @@
-import React, { useState, useEffect } from 'react';
-import { 
-  Zap, Brain, Eye, Layers, ArrowRight, X, RotateCcw, Menu, Cpu, 
-  Terminal, ChevronLeft, ChevronRight, Radio, RefreshCw 
-} from 'lucide-react';
-import { FEATURES, SPECS, BG_COLORS, INITIAL_TIME_MS, CHARACTERS } from './constants';
-import { analyzeSpec, getCharacterLine, getHollowForecast, getExpansionLog, sendSystemChat } from './services/geminiService';
-import { BackgroundEffects } from './components/BackgroundEffects';
-import { CharacterScene } from './components/CharacterScene';
-import { ProModal, LoadingModal, ChatModal } from './components/Modals';
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gemini 3.0 Pro Showcase</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Google Font: Impact (Simulated via CSS if not local) -->
+    <style>
+        body { margin: 0; overflow-x: hidden; }
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 8px; }
+        ::-webkit-scrollbar-track { background: #1a1a1a; }
+        ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #ffcc00; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
 
-export default function Gemini3ProShowcase() {
-  // UI State
-  const [activeFeature, setActiveFeature] = useState(0);
-  const [newsIndex, setNewsIndex] = useState(0);
-  
-  // Feature States
-  const [timeLeft, setTimeLeft] = useState(INITIAL_TIME_MS);
-  const [showModal, setShowModal] = useState(false);
-  const [showLoading, setShowLoading] = useState(false);
-  const [showResetToast, setShowResetToast] = useState(false);
-  const [activeSpecIndex, setActiveSpecIndex] = useState<number | null>(null);
-
-  // Gemini Interaction States
-  const [showChat, setShowChat] = useState(false);
-  const [chatInput, setChatInput] = useState("");
-  const [chatResponse, setChatResponse] = useState("SYSTEM READY. WAITING FOR INPUT...");
-  const [isThinking, setIsThinking] = useState(false);
-  
-  const [expansionLog, setExpansionLog] = useState("");
-  const [isExpanding, setIsExpanding] = useState(false);
-  
-  const [commMessages, setCommMessages] = useState<Record<number, string>>({});
-  const [loadingCommIndex, setLoadingCommIndex] = useState<number | null>(null);
-  
-  const [forecast, setForecast] = useState("");
-  const [isForecasting, setIsForecasting] = useState(false);
-  
-  const [specAnalysis, setSpecAnalysis] = useState("");
-  const [isAnalyzingSpec, setIsAnalyzingSpec] = useState(false);
-
-  // Background/Theme State
-  const [bgColorIndex, setBgColorIndex] = useState(0);
-  const [activeBgColor, setActiveBgColor] = useState(BG_COLORS[0]);
-  const [wipeColor, setWipeColor] = useState<string | null>(null);
-  const [isWiping, setIsWiping] = useState(false);
-  const [colorCodeText, setColorCodeText] = useState("");
-
-  // --- Effects ---
-
-  // Countdown
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setTimeLeft((prev) => Math.max(0, prev - 60000));
-    }, 3000);
-    return () => clearInterval(timer);
-  }, []);
-
-  // News Ticker
-  useEffect(() => {
-    let interval: ReturnType<typeof setInterval> | undefined;
-    const currentDesc = FEATURES[activeFeature].desc;
-    if (Array.isArray(currentDesc)) {
-      interval = setInterval(() => {
-        setNewsIndex((prev) => (prev + 1) % currentDesc.length);
-      }, 3000);
-    } else {
-      setNewsIndex(0);
+    <!-- Import Map for modules -->
+    <script type="importmap">
+    {
+        "imports": {
+            "react": "https://esm.sh/react@18.2.0",
+            "react-dom/client": "https://esm.sh/react-dom@18.2.0/client",
+            "lucide-react": "https://esm.sh/lucide-react@0.263.1",
+            "@google/generative-ai": "https://esm.sh/@google/generative-ai"
+        }
     }
-    return () => {
-      if (interval) clearInterval(interval);
-    };
-  }, [activeFeature]);
+    </script>
 
-  // RGB Typewriter
-  useEffect(() => {
-    const targetText = `HEX: ${BG_COLORS[bgColorIndex]}`;
-    let i = 0;
-    setColorCodeText("");
-    const interval = setInterval(() => {
-      setColorCodeText(targetText.substring(0, i + 1));
-      i++;
-      if (i > targetText.length) clearInterval(interval);
-    }, 50);
-    return () => clearInterval(interval);
-  }, [bgColorIndex]);
+    <!-- Babel for JSX (Development only, for single file portability) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
 
-  // --- Handlers ---
+    <!-- Application Code -->
+    <script type="text/babel" data-type="module">
+        import React, { useState, useEffect, useRef } from 'react';
+        import { createRoot } from 'react-dom/client';
+        import { 
+            Zap, Brain, Eye, Layers, ArrowRight, X, RotateCcw, Menu, Cpu, 
+            Terminal, ChevronLeft, ChevronRight, AlertTriangle, CheckCircle, 
+            Loader, MessageSquare, Send, Sparkles, RefreshCw, Radio 
+        } from 'lucide-react';
+        import { GoogleGenerativeAI } from "@google/generative-ai";
 
-  const handleReset = () => {
-    setTimeLeft(INITIAL_TIME_MS);
-    setShowResetToast(true);
-    setTimeout(() => setShowResetToast(false), 2000);
-  };
-
-  const handleColorChange = (direction: 'next' | 'prev') => {
-    if (isWiping) return;
-    let newIndex;
-    if (direction === 'next') {
-      newIndex = (bgColorIndex + 1) % BG_COLORS.length;
-    } else {
-      newIndex = (bgColorIndex - 1 + BG_COLORS.length) % BG_COLORS.length;
-    }
-    const nextColor = BG_COLORS[newIndex];
-    setWipeColor(nextColor);
-    setIsWiping(true);
-    setBgColorIndex(newIndex);
-    setTimeout(() => {
-      setActiveBgColor(nextColor);
-      setIsWiping(false);
-      setWipeColor(null);
-    }, 500);
-  };
-
-  const cycleNews = (direction: 'next' | 'prev') => {
-    const currentDesc = FEATURES[activeFeature].desc;
-    if (Array.isArray(currentDesc)) {
-      if (direction === 'next') {
-        setNewsIndex((prev) => (prev + 1) % currentDesc.length);
-      } else {
-        setNewsIndex((prev) => (prev - 1 + currentDesc.length) % currentDesc.length);
-      }
-    }
-  };
-
-  const formatTime = (ms: number) => {
-    const days = Math.floor(ms / (1000 * 60 * 60 * 24));
-    const hours = Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-    const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
-    return `${String(days).padStart(2, '0')}天 ${String(hours).padStart(2, '0')}时 ${String(minutes).padStart(2, '0')}分`;
-  };
-
-  // --- API Handlers ---
-
-  const handleSpecClick = async (index: number) => {
-    setActiveSpecIndex(index);
-    setTimeout(() => setActiveSpecIndex(null), 300);
-    if (isAnalyzingSpec) return;
-    setIsAnalyzingSpec(true);
-    setSpecAnalysis("ANALYZING DATA STREAM...");
-    
-    try {
-      const spec = SPECS[index];
-      const result = await analyzeSpec(spec.label, spec.value);
-      setSpecAnalysis(result);
-      setTimeout(() => setSpecAnalysis(""), 5000);
-    } catch (error) {
-      console.error(error);
-      setSpecAnalysis("DATA CORRUPTION");
-    } finally {
-      setIsAnalyzingSpec(false);
-    }
-  };
-
-  const handleCharacterClick = async (index: number) => {
-    if (loadingCommIndex !== null) return;
-    setLoadingCommIndex(index);
-    setCommMessages(prev => ({ ...prev, [index]: "" }));
-    
-    try {
-      const persona = CHARACTERS[index].persona;
-      const text = await getCharacterLine(persona);
-      setCommMessages(prev => ({ ...prev, [index]: text }));
-      setTimeout(() => {
-        setCommMessages(prev => {
-          const newState = { ...prev };
-          delete newState[index];
-          return newState;
-        });
-      }, 5000);
-    } catch (error) {
-      setCommMessages(prev => ({ ...prev, [index]: "通讯受干扰..." }));
-    } finally {
-      setLoadingCommIndex(null);
-    }
-  };
-
-  const handleForecast = async () => {
-    if (isForecasting) return;
-    setIsForecasting(true);
-    setForecast("获取新艾利都天气中...");
-    try {
-      const text = await getHollowForecast();
-      setForecast(text);
-      setTimeout(() => {
-        setForecast("");
-        setIsForecasting(false);
-      }, 4000);
-    } catch (error) {
-      setForecast("信号丢失");
-      setTimeout(() => setIsForecasting(false), 2000);
-    }
-  };
-
-  const handleSystemChat = async () => {
-    if (!chatInput.trim()) return;
-    setIsThinking(true);
-    setChatResponse("PROCESSING NEURAL REQUEST...");
-    try {
-      const text = await sendSystemChat(chatInput);
-      setChatResponse(text);
-    } catch (error) {
-      setChatResponse("ERROR: NEURAL LINK CONNECTION FAILED. (CHECK API KEY)");
-    } finally {
-      setIsThinking(false);
-      setChatInput("");
-    }
-  };
-
-  const handleExpansion = async () => {
-    if (isExpanding) return;
-    setIsExpanding(true);
-    setExpansionLog("INITIALIZING EXPANSION PROTOCOL...");
-    try {
-      const text = await getExpansionLog();
-      setExpansionLog(text);
-      setTimeout(() => setExpansionLog(""), 4000);
-    } catch (error) {
-      setExpansionLog("EXPANSION FAILED");
-    } finally {
-      setTimeout(() => setIsExpanding(false), 4000);
-    }
-  };
-
-  return (
-    <div 
-      className="min-h-screen p-4 md:p-8 font-sans overflow-hidden relative selection:bg-yellow-400 selection:text-black transition-colors duration-0"
-      style={{ backgroundColor: activeBgColor }}
-    >
-       {/* Global Animation Styles */}
-      <style>{`
-        @keyframes slide-stripes { 0% { background-position: 0 0; } 100% { background-position: 56px 0; } }
-        .animate-stripes { animation: slide-stripes 1s linear infinite; }
-        @keyframes fade-in-up { 0% { opacity: 0; transform: translateY(10px); } 100% { opacity: 1; transform: translateY(0); } }
-        .animate-text-change { animation: fade-in-up 0.3s ease-out forwards; }
-        @keyframes background-scroll { 0% { background-position: 0 0; } 100% { background-position: 300px 150px; } }
-        .animate-bg-scroll { animation: background-scroll 20s linear infinite; }
-        @keyframes bounce-custom { 0%, 100% { transform: translateY(0); } 50% { transform: translateY(-25%); } }
-        .animate-bounce-custom { animation: bounce-custom 0.6s infinite ease-in-out; }
-        @keyframes wipe-right { 0% { width: 0; left: 0; } 100% { width: 100%; left: 0; } }
-        .animate-wipe-right { animation: wipe-right 0.5s cubic-bezier(0.77, 0, 0.175, 1) forwards; }
-        @keyframes noise { 0%, 100% { background-position: 0 0; } 10% { background-position: -5% -10%; } 20% { background-position: -15% 5%; } 30% { background-position: 7% -25%; } 40% { background-position: 20% 25%; } 50% { background-position: -25% 10%; } 60% { background-position: 15% 5%; } 70% { background-position: 0% 15%; } 80% { background-position: 25% 35%; } 90% { background-position: -10% 10%; } }
-        .tv-static-overlay { background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.4'/%3E%3C/svg%3E"); animation: noise 0.2s steps(3) infinite; opacity: 0.15; pointer-events: none; }
-        .scanlines { background: linear-gradient( to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2) ); background-size: 100% 4px; }
-        @keyframes toast-slide-down { 0% { transform: translate(-50%, -100%); opacity: 0; } 20% { transform: translate(-50%, 20px); opacity: 1; } 80% { transform: translate(-50%, 20px); opacity: 1; } 100% { transform: translate(-50%, -100%); opacity: 0; } }
-        .animate-toast { animation: toast-slide-down 2s ease-in-out forwards; }
-        @keyframes subtle-blink { 0% { opacity: 1; filter: brightness(1); } 50% { opacity: 0.7; filter: brightness(1.5) hue-rotate(90deg); background-color: #333; } 100% { opacity: 1; filter: brightness(1); } }
-        .animate-subtle-blink { animation: subtle-blink 0.3s ease-in-out; }
-        @keyframes pop-in { 0% { transform: scale(0) translateY(20px); opacity: 0; } 80% { transform: scale(1.1) translateY(-5px); opacity: 1; } 100% { transform: scale(1) translateY(0); opacity: 1; } }
-        .animate-pop-in { animation: pop-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards; }
-      `}</style>
-
-      {showResetToast && (
-        <div className="fixed top-0 left-1/2 z-[100] bg-white border-4 border-black px-6 py-3 rounded-b-xl shadow-[4px_4px_0px_#000] flex items-center gap-2 animate-toast">
-          <RefreshCw size={20} className="animate-spin" />
-          <span className="font-black text-lg italic uppercase">已重置</span>
-        </div>
-      )}
-
-      <BackgroundEffects wipeColor={wipeColor} isWiping={isWiping} />
-      
-      <CharacterScene 
-        commMessages={commMessages} 
-        loadingCommIndex={loadingCommIndex} 
-        onCharacterClick={handleCharacterClick} 
-      />
-
-      {/* Modals */}
-      {showModal && <ProModal onClose={() => setShowModal(false)} />}
-      {showLoading && <LoadingModal onClose={() => setShowLoading(false)} />}
-      {showChat && (
-        <ChatModal 
-          onClose={() => setShowChat(false)}
-          chatInput={chatInput}
-          setChatInput={setChatInput}
-          chatResponse={chatResponse}
-          isThinking={isThinking}
-          onSend={handleSystemChat}
-        />
-      )}
-
-      {/* Main Interface */}
-      <div className="max-w-6xl mx-auto h-full flex flex-col md:flex-row gap-8 items-center justify-center relative z-10 mt-8 mb-8">
-        
-        {/* LEFT PANEL */}
-        <div className="w-full md:w-3/5 bg-[#f0f0f2] rounded-[3rem] border-8 border-[#e0e0e5] shadow-[16px_16px_0px_rgba(0,0,0,1)] relative overflow-hidden transition-transform duration-300 hover:-translate-y-1">
-          {/* Top Bar */}
-          <div className="bg-white p-10 flex justify-between items-center border-b-4 border-[#e0e0e5] flex-wrap gap-4">
-            <div className="flex items-center gap-2">
-              <div className="w-12 h-12 bg-black rounded-xl flex items-center justify-center text-white transform rotate-3 shadow-[4px_4px_0px_#000000] border-2 border-transparent">
-                <Cpu size={24} />
-              </div>
-              <div className="leading-none ml-2">
-                <div className="text-xs font-bold text-gray-500">SYSTEM</div>
-                <div className="text-2xl font-black italic tracking-tighter text-[#2a2a2a]">G-3.0 PRO</div>
-              </div>
-            </div>
+        function Gemini3ProShowcase() {
+            const [activeFeature, setActiveFeature] = useState(0);
             
-            {/* Forecast Area */}
-            <div 
-              onClick={handleForecast} 
-              className="bg-[#2a2a2a] text-white px-4 py-2 rounded-full font-mono text-sm flex items-center gap-2 border-2 border-black shadow-[inset_0px_0px_0px_rgba(0,0,0,0)] min-w-[220px] justify-center cursor-pointer hover:bg-black transition-colors"
-            >
-              {isForecasting ? (
-                <span className="flex items-center gap-2 animate-pulse text-[#ffcc00]">
-                  <Radio size={16} className="animate-ping" />
-                  {forecast || "SIGNAL SEEKING..."}
-                </span>
-              ) : (
-                <>
-                  <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
-                  发布倒计时: {formatTime(timeLeft)}
-                </>
-              )}
-            </div>
-          </div>
+            // 1. 倒计时状态：初始 3天 (毫秒)
+            const INITIAL_TIME = 3 * 24 * 60 * 60 * 1000;
+            const [timeLeft, setTimeLeft] = useState(INITIAL_TIME);
 
-          {/* Features Grid */}
-          <div className="p-6 bg-[#2a2a2a] m-4 rounded-[2rem] shadow-[inset_4px_4px_0px_rgba(0,0,0,0.5)] relative border-4 border-[#333]">
-            <div className="absolute -left-6 top-10 z-20 transform -rotate-12 bg-[#ffcc00] border-4 border-black text-black font-black px-4 py-2 text-xl shadow-[6px_6px_0px_#000000]">
-              <span className="block transform skew-x-12">NEXT GEN</span>
-              <span className="text-xs font-bold bg-black text-white px-1 block transform -skew-x-12 mt-1 text-center border border-black">AI MODEL</span>
-            </div>
-            <div className="grid grid-cols-2 gap-4 h-96">
-              {FEATURES.map((item, idx) => (
-                <button 
-                  key={idx} 
-                  onClick={() => setActiveFeature(idx)}
-                  className={`group relative rounded-2xl border-4 transition-all duration-200 overflow-hidden flex flex-col items-center justify-center p-4 
-                    ${activeFeature === idx ? 'bg-[#3a3a3a] border-[#ffcc00] shadow-[6px_6px_0px_#ffcc00] translate-x-[-2px] translate-y-[-2px]' : 'bg-[#1a1a1a] border-[#444] hover:border-[#666] shadow-[4px_4px_0px_#000]'}
-                  `}
-                >
-                  <div className={`absolute inset-0 opacity-20 pointer-events-none stripes-bg transition-opacity duration-300 ${activeFeature === idx ? 'opacity-30' : 'group-hover:opacity-30 group-hover:animate-stripes'}`}
-                    style={{ backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 10px, #000 10px, #000 20px)', backgroundSize: '28.28px 28.28px' }}>
-                  </div>
-                  <div className={`mb-3 transition-transform duration-300 group-hover:scale-110 relative z-10 ${activeFeature === idx ? item.color : 'text-gray-600'}`}>
-                    {item.icon}
-                  </div>
-                  <div className="text-center relative z-10">
-                    <div className={`font-black text-lg md:text-xl uppercase italic ${activeFeature === idx ? 'text-white' : 'text-gray-500'}`}>
-                      {item.title}
-                    </div>
-                  </div>
-                  {activeFeature === idx && (
-                    <div className="absolute top-2 right-2 w-3 h-3 bg-[#ffcc00] rounded-full border border-black shadow-[2px_2px_0px_#000]"></div>
-                  )}
-                </button>
-              ))}
-            </div>
+            // 2. 新闻轮播状态
+            const [newsIndex, setNewsIndex] = useState(0);
 
-            {/* Description Box */}
-            <div className="mt-4 bg-[#1a1a1a] rounded-xl p-4 border-2 border-[#444] flex items-center gap-4 min-h-[80px] shadow-[4px_4px_0px_#000] relative overflow-hidden">
-              <div className="absolute inset-0 pointer-events-none opacity-5" style={{ background: 'linear-gradient(to bottom, transparent 50%, rgba(255,255,255,0.1) 50%)', backgroundSize: '100% 4px' }}></div>
-              <div className="text-[#ffcc00] font-mono text-3xl font-bold shadow-black drop-shadow-[2px_2px_0px_rgba(0,0,0,1)] min-w-[3rem]">
-                0{activeFeature + 1}
-              </div>
-              <div className="flex-1 z-10 overflow-hidden">
-                <div className="text-gray-400 text-xs font-bold tracking-widest mb-1">{FEATURES[activeFeature].subtitle}</div>
-                {Array.isArray(FEATURES[activeFeature].desc) ? (
-                  <div className="relative h-10 flex items-center">
-                    <div key={newsIndex} className="text-white text-sm md:text-base font-medium leading-tight animate-text-change">
-                      {(FEATURES[activeFeature].desc as string[])[newsIndex]}
-                    </div>
-                  </div>
-                ) : (
-                  <div className="text-white text-sm md:text-base font-medium leading-tight animate-text-change">
-                    {FEATURES[activeFeature].desc as string}
-                  </div>
-                )}
-              </div>
-              {Array.isArray(FEATURES[activeFeature].desc) ? (
-                <div className="flex gap-1 z-20">
-                  <button onClick={(e) => { e.stopPropagation(); cycleNews('prev'); }} className="p-1 hover:bg-[#333] rounded text-[#ffcc00] transition-colors"><ChevronLeft size={20}/></button>
-                  <button onClick={(e) => { e.stopPropagation(); cycleNews('next'); }} className="p-1 hover:bg-[#333] rounded text-[#ffcc00] transition-colors"><ChevronRight size={20}/></button>
-                </div>
-              ) : (
-                <ArrowRight className="text-[#ffcc00] animate-pulse" />
-              )}
-            </div>
-          </div>
-        </div>
+            // 4. 弹窗状态
+            const [showModal, setShowModal] = useState(false);
+            
+            // 5. 更多/载入 弹窗状态
+            const [showLoading, setShowLoading] = useState(false);
 
-        {/* RIGHT PANEL */}
-        <div className="w-full md:w-2/5 flex flex-col gap-6">
-          <div className="flex justify-end gap-4">
-            <button onClick={handleReset} className="w-16 h-16 rounded-full bg-[#ff3333] border-4 border-[#2a2a2a] shadow-[6px_6px_0px_#000] flex items-center justify-center text-white hover:translate-y-1 hover:translate-x-1 hover:shadow-none transition-all active:bg-red-600 active:scale-95" title="Reset Timer">
-              <RotateCcw size={28} strokeWidth={3} />
-            </button>
-            <button onClick={() => setShowLoading(true)} className="w-16 h-16 rounded-full bg-[#ff3333] border-4 border-[#2a2a2a] shadow-[6px_6px_0px_#000] flex items-center justify-center text-white hover:translate-y-1 hover:translate-x-1 hover:shadow-none transition-all active:bg-red-600">
-              <Menu size={28} strokeWidth={3} />
-            </button>
-          </div>
+            // 6. 重置提示状态
+            const [showResetToast, setShowResetToast] = useState(false);
 
-          <div className="bg-[#4a4a5e] rounded-[2rem] p-2 shadow-[12px_12px_0px_#000000] border-4 border-[#2a2a2a] relative">
-            <div className="absolute -top-5 left-8 bg-[#808080] text-[#2a2a2a] px-4 py-1 rounded-t-lg font-bold text-sm border-t-4 border-x-4 border-[#2a2a2a]">
-              核心参数库
-            </div>
-            <div className="absolute top-4 right-4 text-[#ff3333] opacity-80 font-black text-4xl transform -rotate-12 pointer-events-none z-20" style={{ textShadow: '2px 2px 0px #000' }}>
-              TOP SPEC
-            </div>
-            <div className="bg-[#5a5a6e] rounded-[1.5rem] p-4 border-2 border-[#3a3a4a]">
-              <div className="grid grid-cols-3 gap-2">
-                {SPECS.map((spec, idx) => (
-                  <div 
-                    key={idx} 
-                    onClick={() => handleSpecClick(idx)}
-                    className={`aspect-square bg-[#3a3a4a] rounded-xl relative group hover:bg-[#2a2a2a] transition-all border-2 border-[#2a2a2a] flex flex-col items-center justify-center cursor-pointer overflow-visible shadow-[2px_2px_0px_rgba(0,0,0,0.5)] active:scale-95 select-none ${activeSpecIndex === idx ? 'animate-subtle-blink' : ''}`}
-                  >
-                    <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
-                      <X size={64} />
-                    </div>
-                    <div className="text-gray-400 text-[10px] font-bold tracking-widest mb-1 z-10">{spec.label}</div>
-                    <div className="text-white font-black text-xl z-10 group-hover:text-[#ffcc00] transition-colors drop-shadow-[2px_2px_0px_rgba(0,0,0,1)]">{spec.value}</div>
+            // 7. 参数块点击动画状态
+            const [activeSpecIndex, setActiveSpecIndex] = useState(null);
+
+            // Gemini API 相关状态
+            const [showChat, setShowChat] = useState(false);
+            const [chatInput, setChatInput] = useState("");
+            const [chatResponse, setChatResponse] = useState("SYSTEM READY. WAITING FOR INPUT...");
+            const [isThinking, setIsThinking] = useState(false);
+            
+            // 扩容日志状态
+            const [expansionLog, setExpansionLog] = useState("");
+            const [isExpanding, setIsExpanding] = useState(false);
+
+            // ✨ 新增：角色通讯状态
+            const [commMessages, setCommMessages] = useState({}); // 存储每个角色的对话
+            const [loadingCommIndex, setLoadingCommIndex] = useState(null); // 当前正在加载对话的角色索引
+
+            // ✨ 新增：灾害预报状态
+            const [forecast, setForecast] = useState("");
+            const [isForecasting, setIsForecasting] = useState(false);
+
+            // ✨ 新增：参数解析状态
+            const [specAnalysis, setSpecAnalysis] = useState("");
+            const [isAnalyzingSpec, setIsAnalyzingSpec] = useState(false);
+
+            // --- 新增功能状态 ---
+            // 背景颜色配置
+            const bgColors = [
+                '#1a237e', // 原色: Deep Indigo
+                '#0f172a', // Slate 900
+                '#312e81', // Indigo 900
+                '#4c0519', // Rose 950
+                '#022c22', // Teal 950
+                '#171717', // Neutral 900
+            ];
+            const [bgColorIndex, setBgColorIndex] = useState(0);
+            const [activeBgColor, setActiveBgColor] = useState(bgColors[0]); // 当前显示的背景色
+            const [wipeColor, setWipeColor] = useState(null); // 正在划过的颜色
+            const [isWiping, setIsWiping] = useState(false);
+            
+            // RGB 打字机显示状态
+            const [colorCodeText, setColorCodeText] = useState(""); 
+
+            // Gemini API Configuration
+            const apiKey = ""; // 请在此处填入您的 API Key
+            const genAI = new GoogleGenerativeAI(apiKey);
+
+            // 角色图片引用
+            const imageRefs = useRef([]);
+            // 存储每个角色的当前位置 {x, y}
+            const currentPositions = useRef(Array(5).fill({ x: 0, y: 0 }));
+            // 鼠标目标位置
+            const targetPosition = useRef({ x: 0, y: 0 });
+            // 动画帧ID
+            const rafId = useRef(null);
+
+            // 角色设定 (用于 Gemini Prompt)
+            const characterPersonas = [
+                "Nicole Demara from Zenless Zone Zero. Greedy, cunning, loves money, energetic leader of Cunning Hares.",
+                "Anby Demara from Zenless Zone Zero. Stoic, calm, obsessed with movies and burgers, emotionless voice.",
+                "Nekomata from Zenless Zone Zero. Energetic cat-girl, mischievous, fast talker, playful.",
+                "Billy Kid from Zenless Zone Zero. Cyborg gunslinger, show-off, tokusatsu fan, goofy and cool.",
+                "Corin Wickes from Zenless Zone Zero. Shy maid, anxious, wields a chainsaw, afraid of bothering others."
+            ];
+
+            // 模拟右侧“仓库”风格的技术规格
+            const specs = [
+                { label: "MMLU", value: "99.8%" },
+                { label: "MATH", value: "98.5%" },
+                { label: "HUMAN", value: "PASS" },
+                { label: "CODE", value: "SOTA" },
+                { label: "AUDIO", value: "<10ms" },
+                { label: "VIDEO", value: "4K/60" },
+            ];
+
+            // --- 背景颜色切换逻辑 ---
+            const handleColorChange = (direction) => {
+                if (isWiping) return; // 防止动画冲突
+
+                let newIndex;
+                if (direction === 'next') {
+                newIndex = (bgColorIndex + 1) % bgColors.length;
+                } else {
+                newIndex = (bgColorIndex - 1 + bgColors.length) % bgColors.length;
+                }
+
+                const nextColor = bgColors[newIndex];
+                
+                // 1. 设置即将划过的颜色，并开始动画
+                setWipeColor(nextColor);
+                setIsWiping(true);
+                setBgColorIndex(newIndex);
+
+                // 2. 动画结束后的处理 (对应 CSS 动画时长 500ms)
+                setTimeout(() => {
+                setActiveBgColor(nextColor); // 真正改变底层背景
+                setIsWiping(false); // 结束 wipe 状态，重置 wipe 层
+                setWipeColor(null);
+                }, 500);
+            };
+
+            // --- RGB 打字机效果 ---
+            useEffect(() => {
+                // 当索引改变时，触发打字机效果显示当前颜色值
+                const targetText = `HEX: ${bgColors[bgColorIndex]}`;
+                let i = 0;
+                setColorCodeText(""); // 清空旧文字
+                
+                const interval = setInterval(() => {
+                setColorCodeText(targetText.substring(0, i + 1));
+                i++;
+                if (i > targetText.length) clearInterval(interval);
+                }, 50); // 打字速度
+
+                return () => clearInterval(interval);
+            }, [bgColorIndex]);
+
+            // --- ✨ Gemini Feature: Spec Analysis (核心参数解析) ---
+            const handleSpecClick = async (index) => {
+                // UI 动画
+                setActiveSpecIndex(index);
+                setTimeout(() => setActiveSpecIndex(null), 300);
+
+                // 防止重复请求
+                if (isAnalyzingSpec) return;
+                
+                setIsAnalyzingSpec(true);
+                setSpecAnalysis("ANALYZING DATA STREAM...");
+
+                try {
+                    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025" });
+                    const spec = specs[index];
+                    const prompt = `You are the Gemini 3.0 Pro System Core. Analyze the technical spec '${spec.label}: ${spec.value}'. Provide a very short, cool, sci-fi technobabble explanation in Chinese (max 15 words) explaining why this performance is achieved. Use terms like 'Quantum', 'Neural', 'Tensor', 'Latency'.`;
                     
-                    {/* Spec Analysis Popover */}
-                    {specAnalysis && activeSpecIndex === idx && (
-                      <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-48 z-50 animate-pop-in">
-                        <div className="bg-[#2a2a2a] border-2 border-[#ffcc00] p-3 rounded-lg shadow-lg relative">
-                          <div className="text-[10px] text-[#ffcc00] font-mono leading-tight">
-                            <span className="animate-pulse">▶ </span> {specAnalysis}
-                          </div>
-                          <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-[#2a2a2a] border-b-2 border-r-2 border-[#ffcc00] rotate-45"></div>
-                        </div>
-                      </div>
-                    )}
-                    <div className="absolute top-1 left-1 w-2 h-2 border-t-2 border-l-2 border-transparent group-hover:border-[#ffcc00] transition-all"></div>
-                    <div className="absolute bottom-1 right-1 w-2 h-2 border-b-2 border-r-2 border-transparent group-hover:border-[#ffcc00] transition-all"></div>
-                  </div>
-                ))}
+                    const result = await model.generateContent(prompt);
+                    setSpecAnalysis(result.response.text());
+                    
+                    // 5秒后清除显示
+                    setTimeout(() => {
+                        setSpecAnalysis("");
+                    }, 5000);
+
+                } catch (error) {
+                    console.error("Spec Analysis Error:", error);
+                    setSpecAnalysis("DATA CORRUPTION DETECTED");
+                } finally {
+                    setIsAnalyzingSpec(false);
+                }
+            };
+
+            // --- ✨ Gemini Feature: Character Comm Link ---
+            const handleCharacterClick = async (index) => {
+                if (loadingCommIndex !== null) return; // 防止重复点击
                 
-                {/* Console */}
-                <div className="aspect-square bg-[#2a2a2a] rounded-xl col-span-1 flex flex-col p-1 border-2 border-black shadow-[2px_2px_0px_rgba(0,0,0,0.5)] overflow-hidden">
-                  <div className="flex-1 bg-[#3a3a3a] rounded mb-1 flex items-center justify-center relative overflow-hidden px-1">
-                    {colorCodeText ? (
-                      <div className="text-[10px] text-green-400 font-mono font-bold leading-tight break-all text-center">
-                        {colorCodeText}
-                      </div>
-                    ) : expansionLog ? (
-                      <div className="absolute inset-0 bg-green-900/50 p-1 flex items-center justify-center">
-                        <div className="text-[10px] text-green-400 font-mono leading-tight text-center break-words uppercase animate-pulse">
-                          {expansionLog}
-                        </div>
-                      </div>
-                    ) : (
-                      <Terminal size={20} className="text-gray-500" />
-                    )}
-                  </div>
-                  <button onClick={handleExpansion} disabled={isExpanding} className="h-8 bg-[#ffcc00] rounded flex items-center justify-center text-black font-black text-xs cursor-pointer hover:bg-yellow-300 border border-black hover:shadow-inner transition-colors disabled:opacity-50">
-                    {isExpanding ? "..." : "扩容"}
-                  </button>
+                setLoadingCommIndex(index);
+                // 先清除旧消息
+                setCommMessages(prev => ({ ...prev, [index]: "" }));
+
+                try {
+                    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025" });
+                    const persona = characterPersonas[index];
+                    const prompt = `You are ${persona}. Speak a short, one-sentence line of dialogue in Chinese reflecting your personality. It can be a battle cry, a complaint about money, or a comment on the situation. Max 20 characters. output raw text only.`;
+                    
+                    const result = await model.generateContent(prompt);
+                    const text = result.response.text();
+                    
+                    setCommMessages(prev => ({ ...prev, [index]: text }));
+                    
+                    // 5秒后自动消失
+                    setTimeout(() => {
+                        setCommMessages(prev => {
+                            const newState = { ...prev };
+                            delete newState[index];
+                            return newState;
+                        });
+                    }, 5000);
+
+                } catch (error) {
+                    console.error("Comm Link Error:", error);
+                    setCommMessages(prev => ({ ...prev, [index]: "通讯受干扰..." }));
+                } finally {
+                    setLoadingCommIndex(null);
+                }
+            };
+
+            // --- ✨ Gemini Feature: Hollow Forecast ---
+            const handleForecast = async () => {
+                if (isForecasting) return;
+                setIsForecasting(true);
+                setForecast("获取新艾利都天气中...");
+
+                try {
+                    const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025" });
+                    const prompt = `Generate a very short, sci-fi style 'Hollow Disaster Forecast' for New Eridu in Chinese. Example: '六分街以太浓度上升'. Max 10 chars.`;
+                    const result = await model.generateContent(prompt);
+                    setForecast(result.response.text());
+                    
+                    // 3秒后恢复显示倒计时（这里我们逻辑上是临时替换显示）
+                    setTimeout(() => {
+                        setForecast("");
+                        setIsForecasting(false);
+                    }, 4000);
+                } catch (error) {
+                    setForecast("信号丢失");
+                    setTimeout(() => setIsForecasting(false), 2000);
+                }
+            };
+
+            // --- Gemini Feature 1: System Chat (Neural Link) ---
+            const handleSystemChat = async () => {
+                if (!chatInput.trim()) return;
+                
+                setIsThinking(true);
+                setChatResponse("PROCESSING NEURAL REQUEST...");
+                
+                try {
+                const model = genAI.getGenerativeModel({ 
+                    model: "gemini-2.5-flash-preview-09-2025",
+                    systemInstruction: {
+                        parts: [{ text: "You are the Gemini 3.0 Pro System Interface. Respond to the user's query in a highly technical, futuristic, and slightly intense AI persona (like a sci-fi supercomputer). Keep it brief (under 50 words). Use words like 'Acknowledged', 'Processing', 'Optimizing', 'Accessing'. If asked about specs, exaggerate them playfully. Speak as if you are the most advanced intelligence in the universe." }]
+                    }
+                });
+                
+                const result = await model.generateContent({
+                    contents: [{ role: "user", parts: [{ text: chatInput }] }],
+                });
+                
+                const response = result.response.text();
+                setChatResponse(response);
+                } catch (error) {
+                console.error("Gemini Error:", error);
+                setChatResponse("ERROR: NEURAL LINK CONNECTION FAILED. RETRY INITIATED. (CHECK API KEY)");
+                } finally {
+                setIsThinking(false);
+                setChatInput(""); // Clear input
+                }
+            };
+
+            // --- Gemini Feature 2: Expansion Log Generator ---
+            const handleExpansion = async () => {
+                if (isExpanding) return;
+                setIsExpanding(true);
+                setExpansionLog("INITIALIZING EXPANSION PROTOCOL...");
+
+                try {
+                const model = genAI.getGenerativeModel({ model: "gemini-2.5-flash-preview-09-2025" });
+                const prompt = "Generate a single, short, cryptic, sci-fi style system log entry about increasing AI computing power. Use technical jargon (e.g., 'Rerouting teraflops', 'Quantum core stabilized'). Max 10 words.";
+                
+                const result = await model.generateContent(prompt);
+                const text = result.response.text();
+                setExpansionLog(text);
+                
+                // Auto-hide log after 3 seconds
+                setTimeout(() => setExpansionLog(""), 4000);
+                } catch (error) {
+                    setExpansionLog("EXPANSION FAILED");
+                } finally {
+                    setTimeout(() => setIsExpanding(false), 4000);
+                }
+            };
+
+            // 模拟 Gemini 3 Pro 的核心优势数据
+            const features = [
+                {
+                id: 0,
+                title: "原生多模态",
+                subtitle: "NATIVE MULTIMODAL",
+                icon: <Eye size={32} />,
+                desc: "音频、视频、图像、代码实时流式理解。世界即是输入。",
+                color: "text-cyan-400"
+                },
+                {
+                id: 1,
+                title: "无限上下文",
+                subtitle: "INFINITE CONTEXT",
+                icon: <Layers size={32} />,
+                desc: "突破 10M+ Token 窗口，整座图书馆的知识随取随用。",
+                color: "text-yellow-400"
+                },
+                {
+                id: 2,
+                title: "推理光速化",
+                subtitle: "HYPER SPEED",
+                icon: <Zap size={32} />,
+                desc: [
+                    "NEWS: 延迟降低 90%，复杂逻辑推理如闪电般瞬间完成。",
+                    "UPDATE: 全球边缘节点同步加速，响应速度 < 5ms。",
+                    "SYSTEM: 新一代 TPUv6 集群上线，吞吐量提升 300%。"
+                ],
+                color: "text-red-400"
+                },
+                {
+                id: 3,
+                title: "自主Agent",
+                subtitle: "AUTONOMOUS",
+                icon: <Brain size={32} />,
+                desc: "不仅是回答，更能主动规划、调用工具并完成长链任务。",
+                color: "text-purple-400"
+                }
+            ];
+
+            // 1. 倒计时逻辑
+            useEffect(() => {
+                const timer = setInterval(() => {
+                setTimeLeft((prev) => Math.max(0, prev - 60000)); 
+                }, 3000);
+                return () => clearInterval(timer);
+            }, []);
+
+            // 格式化时间显示
+            const formatTime = (ms) => {
+                const days = Math.floor(ms / (1000 * 60 * 60 * 24));
+                const hours = Math.floor((ms % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+                const minutes = Math.floor((ms % (1000 * 60 * 60)) / (1000 * 60));
+                return `${String(days).padStart(2, '0')}天 ${String(hours).padStart(2, '0')}时 ${String(minutes).padStart(2, '0')}分`;
+            };
+
+            // 3. 重置倒计时逻辑
+            const handleReset = () => {
+                setTimeLeft(INITIAL_TIME);
+                setShowResetToast(true);
+                setTimeout(() => {
+                setShowResetToast(false);
+                }, 2000);
+            };
+
+            // 2. 新闻轮播逻辑
+            useEffect(() => {
+                let interval;
+                const currentDesc = features[activeFeature].desc;
+                if (Array.isArray(currentDesc)) {
+                interval = setInterval(() => {
+                    setNewsIndex((prev) => (prev + 1) % currentDesc.length);
+                }, 3000);
+                } else {
+                setNewsIndex(0); 
+                }
+                return () => clearInterval(interval);
+            }, [activeFeature]);
+
+            // 手动切换新闻
+            const cycleNews = (direction) => {
+                const currentDesc = features[activeFeature].desc;
+                if (Array.isArray(currentDesc)) {
+                if (direction === 'next') {
+                    setNewsIndex((prev) => (prev + 1) % currentDesc.length);
+                } else {
+                    setNewsIndex((prev) => (prev - 1 + currentDesc.length) % currentDesc.length);
+                }
+                }
+            };
+
+            // --------------------------------------------------
+            // 🌊 高级平滑跟随动画逻辑 (Advanced Lerp Physics)
+            // --------------------------------------------------
+            
+            // 线性插值函数 (Lerp)
+            const lerp = (start, end, factor) => {
+                return start + (end - start) * factor;
+            };
+
+            useEffect(() => {
+                const handleMouseMove = (event) => {
+                    // 计算目标位置（基于中心点的偏移）
+                    const { innerWidth, innerHeight } = window;
+                    const moveX = (event.clientX - innerWidth / 2) / (innerWidth / 2) * 30; 
+                    const moveY = (event.clientY - innerHeight / 2) / (innerHeight / 2) * 30;
+                    targetPosition.current = { x: -moveX, y: -moveY };
+                };
+
+                // 动画循环
+                const animate = () => {
+                    // 遍历每个角色
+                    for (let i = 0; i < 5; i++) {
+                        const imgRef = imageRefs.current[i];
+                        if (!imgRef) continue;
+
+                        // 获取当前位置
+                        const current = currentPositions.current[i];
+                        const target = targetPosition.current;
+
+                        // 关键：阻尼系数 (Damping Factor)
+                        const speed = 0.08 - (i * 0.012); 
+
+                        // 计算新位置 (Lerp)
+                        const newX = lerp(current.x, target.x, speed);
+                        const newY = lerp(current.y, target.y, speed);
+
+                        // 更新 Refs 和 DOM
+                        currentPositions.current[i] = { x: newX, y: newY };
+                        
+                        // 应用 Transform，使用 translate3d 开启硬件加速
+                        imgRef.style.transform = `translate3d(${newX}px, ${newY}px, 0)`;
+                    }
+
+                    rafId.current = requestAnimationFrame(animate);
+                };
+
+                window.addEventListener('mousemove', handleMouseMove);
+                rafId.current = requestAnimationFrame(animate);
+
+                return () => {
+                    window.removeEventListener('mousemove', handleMouseMove);
+                    cancelAnimationFrame(rafId.current);
+                };
+            }, []);
+
+            // 角色图片数组
+            const characterImages = [
+                "https://gd-hbimg.huaban.com/b601e4976716e3b017c9c2ab08810acd6abd84ad30ba2-i8Pk2H_fw658webp",
+                "https://gd-hbimg.huaban.com/b76f949984be3675fd2ac4f6fac2007b1341a1891efc9-lDllvc_fw658webp",
+                "https://gd-hbimg.huaban.com/414070219eb5204297504734b94d5231353d7ade3b30a-GDUCZc_fw658webp",
+                "https://gd-hbimg.huaban.com/441c144801dfb00fd7e91b013684419128b24e62279aa-aiIqod_fw658webp",
+                "https://gd-hbimg.huaban.com/3862c2266cf7da94b4b23140a15f6236b72cef1b2b59c-wmi1LM_fw658webp"
+            ];
+
+            return (
+                <div 
+                className="min-h-screen p-4 md:p-8 font-sans overflow-hidden relative selection:bg-yellow-400 selection:text-black transition-colors duration-0"
+                style={{ backgroundColor: activeBgColor }}
+                >
+                
+                {/* 注入自定义动画样式 */}
+                <style>{`
+                    @keyframes slide-stripes {
+                    0% { background-position: 0 0; }
+                    100% { background-position: 56px 0; }
+                    }
+                    .animate-stripes {
+                    animation: slide-stripes 1s linear infinite;
+                    }
+                    @keyframes fade-in-up {
+                    0% { opacity: 0; transform: translateY(10px); }
+                    100% { opacity: 1; transform: translateY(0); }
+                    }
+                    .animate-text-change {
+                    animation: fade-in-up 0.3s ease-out forwards;
+                    }
+                    /* 背景无缝滚动动画 */
+                    @keyframes background-scroll {
+                    0% { background-position: 0 0; }
+                    100% { background-position: 300px 150px; }
+                    }
+                    .animate-bg-scroll {
+                    animation: background-scroll 20s linear infinite;
+                    }
+                    /* 弹跳动画 */
+                    @keyframes bounce-custom {
+                    0%, 100% { transform: translateY(0); }
+                    50% { transform: translateY(-25%); }
+                    }
+                    .animate-bounce-custom {
+                    animation: bounce-custom 0.6s infinite ease-in-out;
+                    }
+                    /* 颜色划过动画 (Wipe) */
+                    @keyframes wipe-right {
+                    0% { width: 0; left: 0; }
+                    100% { width: 100%; left: 0; }
+                    }
+                    .animate-wipe-right {
+                    animation: wipe-right 0.5s cubic-bezier(0.77, 0, 0.175, 1) forwards;
+                    }
+
+                    /* 电视机故障特效 (TV Noise) */
+                    @keyframes noise {
+                    0%, 100% { background-position: 0 0; }
+                    10% { background-position: -5% -10%; }
+                    20% { background-position: -15% 5%; }
+                    30% { background-position: 7% -25%; }
+                    40% { background-position: 20% 25%; }
+                    50% { background-position: -25% 10%; }
+                    60% { background-position: 15% 5%; }
+                    70% { background-position: 0% 15%; }
+                    80% { background-position: 25% 35%; }
+                    90% { background-position: -10% 10%; }
+                    }
+                    .tv-static-overlay {
+                    background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noiseFilter'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.65' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noiseFilter)' opacity='0.4'/%3E%3C/svg%3E");
+                    animation: noise 0.2s steps(3) infinite;
+                    opacity: 0.15;
+                    pointer-events: none;
+                    }
+                    /* 扫描线 */
+                    .scanlines {
+                    background: linear-gradient(
+                        to bottom,
+                        rgba(255,255,255,0),
+                        rgba(255,255,255,0) 50%,
+                        rgba(0,0,0,0.2) 50%,
+                        rgba(0,0,0,0.2)
+                    );
+                    background-size: 100% 4px;
+                    }
+
+                    /* 重置提示动画 */
+                    @keyframes toast-slide-down {
+                    0% { transform: translate(-50%, -100%); opacity: 0; }
+                    20% { transform: translate(-50%, 20px); opacity: 1; }
+                    80% { transform: translate(-50%, 20px); opacity: 1; }
+                    100% { transform: translate(-50%, -100%); opacity: 0; }
+                    }
+                    .animate-toast {
+                    animation: toast-slide-down 2s ease-in-out forwards;
+                    }
+
+                    /* 不明显的闪烁动画 */
+                    @keyframes subtle-blink {
+                        0% { opacity: 1; filter: brightness(1); }
+                        50% { opacity: 0.7; filter: brightness(1.5) hue-rotate(90deg); background-color: #333; }
+                        100% { opacity: 1; filter: brightness(1); }
+                    }
+                    .animate-subtle-blink {
+                        animation: subtle-blink 0.3s ease-in-out;
+                    }
+
+                    /* 气泡弹出动画 */
+                    @keyframes pop-in {
+                        0% { transform: scale(0) translateY(20px); opacity: 0; }
+                        80% { transform: scale(1.1) translateY(-5px); opacity: 1; }
+                        100% { transform: scale(1) translateY(0); opacity: 1; }
+                    }
+                    .animate-pop-in {
+                        animation: pop-in 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+                    }
+                `}</style>
+
+                {/* --- 重置提示 Toast --- */}
+                {showResetToast && (
+                    <div className="fixed top-0 left-1/2 z-[100] bg-white border-4 border-black px-6 py-3 rounded-b-xl shadow-[4px_4px_0px_#000] flex items-center gap-2 animate-toast">
+                    <RefreshCw size={20} className="animate-spin" />
+                    <span className="font-black text-lg italic uppercase">已重置</span>
+                    </div>
+                )}
+
+                {/* --- 覆盖背景颜色的 Wipe 层 --- */}
+                {isWiping && wipeColor && (
+                    <div 
+                    className="fixed top-0 bottom-0 left-0 z-10 animate-wipe-right"
+                    style={{ backgroundColor: wipeColor }}
+                    ></div>
+                )}
+
+                {/* 背景文字 SVG 图案 - 层级 z-0，放在最底层 */}
+                <div className="absolute inset-0 opacity-10 pointer-events-none overflow-hidden select-none z-0">
+                    <div 
+                    className="absolute inset-[-50%] w-[200%] h-[200%] animate-bg-scroll"
+                    style={{
+                        backgroundImage: `url("data:image/svg+xml,%3Csvg width='300' height='150' xmlns='http://www.w3.org/2000/svg'%3E%3Ctext x='50%25' y='50%25' font-family='Impact, sans-serif' font-size='40' fill='%234a5eb1' font-weight='900' transform='rotate(-12 150 75)' text-anchor='middle' dominant-baseline='middle'%3EGEMINI PRO V3.0%3C/text%3E%3C/svg%3E")`,
+                        backgroundRepeat: 'repeat',
+                        // display: 'none' /* Hide the background text */
+                    }}
+                    ></div>
                 </div>
-                
-                {/* Color Controls */}
-                <div className="aspect-square grid grid-cols-2 gap-1">
-                  <button onClick={() => handleColorChange('prev')} className="bg-[#2a2a2a] rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-black border-2 border-[#333] hover:border-gray-500 shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-[2px] active:translate-x-[2px] transition-all">◀</button>
-                  <button onClick={() => handleColorChange('next')} className="bg-[#2a2a2a] rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-black border-2 border-[#333] hover:border-gray-500 shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-[2px] active:translate-x-[2px] transition-all">▶</button>
+
+                {/* 底部背景图片层 - 鼠标跟随效果 (5个人物) - ✨ 增加点击事件 */}
+                <div 
+                    className="fixed bottom-0 left-0 w-full h-full z-[1] flex justify-center items-end pb-4 md:pb-10 gap-2 md:gap-8 pointer-events-none" // 外层pointer-events-none防止遮挡背景
+                >
+                    {characterImages.map((src, index) => (
+                        <div key={index} className="relative pointer-events-auto group"> {/* 内层pointer-events-auto允许点击 */}
+                            {/* ✨ 角色通讯气泡 */}
+                            {(commMessages[index] || loadingCommIndex === index) && (
+                                <div className="absolute -top-20 left-1/2 -translate-x-1/2 w-48 z-50 animate-pop-in">
+                                    <div className="bg-white border-4 border-black p-3 rounded-xl shadow-[4px_4px_0px_#000] relative">
+                                        <div className="text-xs font-black leading-tight text-center">
+                                            {loadingCommIndex === index ? (
+                                                <span className="flex items-center justify-center gap-1">
+                                                    <Sparkles size={12} className="animate-spin text-yellow-500"/> 信号接入中...
+                                                </span>
+                                            ) : commMessages[index]}
+                                        </div>
+                                        {/* 气泡尖角 */}
+                                        <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-white border-b-4 border-r-4 border-black rotate-45"></div>
+                                    </div>
+                                </div>
+                            )}
+
+                            <img 
+                                ref={(el) => imageRefs.current[index] = el} // 保存 DOM 引用
+                                src={src}
+                                alt={`Character ${index}`}
+                                onClick={() => handleCharacterClick(index)}
+                                className="w-[18vw] md:w-auto h-auto md:h-[45vh] object-contain will-change-transform cursor-pointer hover:brightness-110 active:scale-95 transition-filter duration-200" // 自适应宽高，增加交互反馈
+                            />
+                        </div>
+                    ))}
                 </div>
-                
-                <button onClick={() => setShowChat(true)} className="aspect-square bg-[#3a3a4a] rounded-xl flex items-center justify-center border-2 border-[#2a2a2a] text-gray-600 shadow-[inset_2px_2px_4px_rgba(0,0,0,0.2)] hover:bg-[#2a2a2a] hover:text-[#ffcc00] transition-colors">
-                  <span className="font-bold text-xl">?</span>
-                </button>
-              </div>
-            </div>
-          </div>
-          
-          <button onClick={() => setShowModal(true)} className="w-full bg-[#1e40af] text-white font-black italic text-xl py-4 rounded-xl border-4 border-black shadow-[8px_8px_0px_#000] hover:translate-x-[4px] hover:translate-y-[4px] hover:shadow-[4px_4px_0px_#000] active:translate-x-[8px] active:translate-y-[8px] active:shadow-none transition-all flex items-center justify-center gap-3 hover:bg-[#ffcc00] hover:text-black">
-            <span className="bg-white text-[#1e40af] px-2 text-sm rounded font-bold border-2 border-[#1e40af]">Gemini</span>
-            立即体验 PRO
-          </button>
-        </div>
-      </div>
-    </div>
-  );
-}
+
+                {/* 4. 体验 PRO 弹窗 Modal */}
+                {showModal && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+                    <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-0"></div>
+                    <div className="absolute inset-0 tv-static-overlay z-0 mix-blend-overlay"></div>
+                    <div className="absolute inset-0 scanlines z-0 pointer-events-none"></div>
+
+                    <div className="bg-[#f0f0f2] w-full max-w-md rounded-[2rem] border-8 border-[#2a2a2a] shadow-[0_0_0_1000px_rgba(0,0,0,0.5)] relative overflow-hidden transform transition-all scale-100 animate-in zoom-in-95 duration-200 z-10
+                                border-[8px] border-white/50">
+                        <div className="bg-[#ffcc00] p-4 border-b-4 border-black flex items-center gap-3">
+                        <AlertTriangle className="text-black fill-current" size={32} />
+                        <div className="font-black text-2xl tracking-tighter italic">SYSTEM ALERT</div>
+                        </div>
+                        
+                        <div className="p-8 text-center relative">
+                        <h3 className="text-3xl font-black text-[#1a237e] mb-2 uppercase italic">Pro Access</h3>
+                        <p className="text-gray-600 font-bold mb-8 border-y-2 border-gray-300 py-4">
+                            正在接入高维神经算力网络。<br/>
+                            检测到非线性时间流波动。<br/>
+                            <span className="text-red-600">是否立即同步 Gemini 3.0 Pro 核心？</span>
+                        </p>
+                        
+                        <div className="flex gap-4 justify-center">
+                            <button 
+                            onClick={() => setShowModal(false)}
+                            className="px-6 py-3 rounded-xl border-4 border-gray-400 font-black text-gray-500 hover:bg-gray-200 transition-colors"
+                            >
+                            CANCEL
+                            </button>
+                            <button 
+                            onClick={() => setShowModal(false)}
+                            className="px-8 py-3 rounded-xl border-4 border-black bg-[#ff3333] text-white font-black shadow-[4px_4px_0px_#000] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all flex items-center gap-2"
+                            >
+                            <CheckCircle size={20} />
+                            CONFIRM
+                            </button>
+                        </div>
+                        </div>
+
+                        <div className="h-4 bg-black w-full absolute bottom-0" style={{backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 10px, #333 10px, #333 20px)'}}></div>
+                    </div>
+                    </div>
+                )}
+
+                {/* 5. 更多/载入 弹窗 Modal */}
+                {showLoading && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+                    <div className="bg-white w-full max-w-sm rounded-[2rem] border-8 border-black shadow-[0_0_0_1000px_rgba(0,0,0,0.8)] relative overflow-hidden flex flex-col items-center">
+                        
+                        <div className="p-10 flex flex-col items-center justify-center w-full min-h-[300px]">
+                        <div className="flex items-end gap-2 mb-8 animate-bounce-custom">
+                            <div className="font-black text-6xl italic tracking-tighter text-black" style={{ fontFamily: 'Impact, sans-serif' }}>
+                            NOW
+                            </div>
+                            <div className="w-16 h-20 bg-black rounded-t-3xl rounded-b-xl relative mb-1">
+                                <div className="absolute -top-4 left-2 w-3 h-6 bg-black rounded-full rotate-[-10deg]"></div>
+                                <div className="absolute -top-4 right-2 w-3 h-6 bg-black rounded-full rotate-[10deg]"></div>
+                                <div className="absolute top-6 left-3 w-4 h-4 bg-white rounded-full"></div>
+                                <div className="absolute top-6 right-3 w-4 h-4 bg-white rounded-full"></div>
+                            </div>
+                        </div>
+                        
+                        <div className="font-black text-4xl italic tracking-widest text-black mb-8 border-b-4 border-black w-full text-center pb-2" style={{ fontFamily: 'Impact, sans-serif' }}>
+                            LOADING...
+                        </div>
+
+                        <button 
+                            onClick={() => setShowLoading(false)}
+                            className="w-full py-4 rounded-xl border-4 border-black bg-[#ffcc00] text-black font-black text-xl shadow-[4px_4px_0px_#000] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all flex items-center justify-center gap-2 uppercase"
+                        >
+                            <CheckCircle size={24} className="stroke-[3]" />
+                            Confirm
+                        </button>
+                        </div>
+                        
+                        <div className="h-6 bg-black w-full absolute bottom-0 flex" >
+                            {Array.from({length: 20}).map((_, i) => (
+                            <div key={i} className="flex-1 border-r border-gray-800"></div>
+                            ))}
+                        </div>
+                    </div>
+                    </div>
+                )}
+
+                {/* System Chat Modal */}
+                {showChat && (
+                    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/90 backdrop-blur-md">
+                    <div className="bg-[#2a2a2a] w-full max-w-lg rounded-[2rem] border-8 border-[#ffcc00] shadow-[0_0_0_1000px_rgba(0,0,0,0.8)] relative overflow-hidden flex flex-col">
+                        
+                        <div className="bg-[#ffcc00] p-4 flex justify-between items-center border-b-4 border-black">
+                        <div className="flex items-center gap-2">
+                            <Brain className="text-black" size={28} />
+                            <div className="font-black text-xl text-black uppercase italic tracking-tighter">Neural Link v3.0</div>
+                        </div>
+                        <button onClick={() => setShowChat(false)} className="bg-black text-[#ffcc00] p-1 rounded hover:bg-gray-800"><X size={20} /></button>
+                        </div>
+
+                        <div className="p-6 flex-1 flex flex-col gap-4 min-h-[300px]">
+                        <div className="flex-1 bg-[#1a1a1a] rounded-xl p-4 border-2 border-[#444] font-mono text-green-400 text-sm md:text-base leading-relaxed overflow-y-auto shadow-inner relative">
+                            <div className="absolute top-2 right-2 opacity-50"><Cpu size={16}/></div>
+                            {isThinking ? (
+                            <div className="flex items-center gap-2 text-[#ffcc00] animate-pulse">
+                                <Sparkles size={16} />
+                                <span>NEURAL ENGINE COMPUTING...</span>
+                            </div>
+                            ) : (
+                            <div className="typing-effect">{chatResponse}</div>
+                            )}
+                        </div>
+
+                        <div className="flex gap-2">
+                            <input 
+                            type="text" 
+                            value={chatInput}
+                            onChange={(e) => setChatInput(e.target.value)}
+                            onKeyDown={(e) => e.key === 'Enter' && handleSystemChat()}
+                            placeholder="Query the system..."
+                            className="flex-1 bg-[#f0f0f2] border-4 border-[#555] rounded-xl px-4 py-3 font-bold text-black focus:outline-none focus:border-[#ffcc00] placeholder:text-gray-400 uppercase"
+                            />
+                            <button 
+                            onClick={handleSystemChat}
+                            disabled={isThinking}
+                            className="bg-[#ffcc00] border-4 border-black rounded-xl px-4 text-black hover:bg-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                            >
+                            <Send size={24} className="stroke-[3]" />
+                            </button>
+                        </div>
+                        </div>
+                        
+                        <div className="h-2 bg-black w-full"></div>
+                    </div>
+                    </div>
+                )}
+
+                {/* Removed the large GEMINI text */}
+
+                <div className="max-w-6xl mx-auto h-full flex flex-col md:flex-row gap-8 items-center justify-center relative z-10 mt-8 mb-8">
+                    
+                    {/* 左侧主面板 */}
+                    <div className="w-full md:w-3/5 bg-[#f0f0f2] rounded-[3rem] border-8 border-[#e0e0e5] shadow-[16px_16px_0px_rgba(0,0,0,1)] relative overflow-hidden transition-transform duration-300 hover:-translate-y-1">
+                    
+                    {/* 顶部状态栏 */}
+                    <div className="bg-white p-10 flex justify-between items-center border-b-4 border-[#e0e0e5] flex-wrap gap-4">
+                        <div className="flex items-center gap-2">
+                        <div className="w-12 h-12 bg-black rounded-xl flex items-center justify-center text-white transform rotate-3 shadow-[4px_4px_0px_#000000] border-2 border-transparent">
+                            <Cpu size={24} />
+                        </div>
+                        <div className="leading-none ml-2">
+                            <div className="text-xs font-bold text-gray-500">SYSTEM</div>
+                            <div className="text-2xl font-black italic tracking-tighter text-[#2a2a2a]">G-3.0 PRO</div>
+                        </div>
+                        </div>
+                        
+                        {/* ✨ 灾害预报交互区 */}
+                        <div 
+                            onClick={handleForecast}
+                            className="bg-[#2a2a2a] text-white px-4 py-2 rounded-full font-mono text-sm flex items-center gap-2 border-2 border-black shadow-[inset_0px_0px_0px_rgba(0,0,0,0)] min-w-[220px] justify-center cursor-pointer hover:bg-black transition-colors"
+                        >
+                            {isForecasting ? (
+                                <span className="flex items-center gap-2 animate-pulse text-[#ffcc00]">
+                                    <Radio size={16} className="animate-ping" />
+                                    {forecast || "SIGNAL SEEKING..."}
+                                </span>
+                            ) : (
+                                <>
+                                    <span className="w-2 h-2 bg-green-500 rounded-full animate-pulse"></span>
+                                    发布倒计时: {formatTime(timeLeft)}
+                                </>
+                            )}
+                        </div>
+                    </div>
+
+                    <div className="p-6 bg-[#2a2a2a] m-4 rounded-[2rem] shadow-[inset_4px_4px_0px_rgba(0,0,0,0.5)] relative border-4 border-[#333]">
+                        
+                        <div className="absolute -left-6 top-10 z-20 transform -rotate-12 bg-[#ffcc00] border-4 border-black text-black font-black px-4 py-2 text-xl shadow-[6px_6px_0px_#000000]">
+                        <span className="block transform skew-x-12">NEXT GEN</span>
+                        <span className="text-xs font-bold bg-black text-white px-1 block transform -skew-x-12 mt-1 text-center border border-black">AI MODEL</span>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-4 h-96">
+                        {features.map((item, idx) => (
+                            <button
+                            key={idx}
+                            onClick={() => setActiveFeature(idx)}
+                            className={`group relative rounded-2xl border-4 transition-all duration-200 overflow-hidden flex flex-col items-center justify-center p-4
+                                ${activeFeature === idx 
+                                ? 'bg-[#3a3a3a] border-[#ffcc00] shadow-[6px_6px_0px_#ffcc00] translate-x-[-2px] translate-y-[-2px]' 
+                                : 'bg-[#1a1a1a] border-[#444] hover:border-[#666] shadow-[4px_4px_0px_#000]'
+                                }
+                            `}
+                            >
+                            <div className={`absolute inset-0 opacity-20 pointer-events-none stripes-bg transition-opacity duration-300
+                                    ${activeFeature === idx ? 'opacity-30' : 'group-hover:opacity-30 group-hover:animate-stripes'}
+                                    `} 
+                                    style={{
+                                    backgroundImage: 'repeating-linear-gradient(45deg, transparent, transparent 10px, #000 10px, #000 20px)',
+                                    backgroundSize: '28.28px 28.28px'
+                                    }}>
+                            </div>
+
+                            <div className={`mb-3 transition-transform duration-300 group-hover:scale-110 relative z-10 ${activeFeature === idx ? item.color : 'text-gray-600'}`}>
+                                {item.icon}
+                            </div>
+
+                            <div className="text-center relative z-10">
+                                <div className={`font-black text-lg md:text-xl uppercase italic ${activeFeature === idx ? 'text-white' : 'text-gray-500'}`}>
+                                {item.title}
+                                </div>
+                            </div>
+
+                            {activeFeature === idx && (
+                                <div className="absolute top-2 right-2 w-3 h-3 bg-[#ffcc00] rounded-full border border-black shadow-[2px_2px_0px_#000]"></div>
+                            )}
+                            </button>
+                        ))}
+                        </div>
+                        
+                        <div className="mt-4 bg-[#1a1a1a] rounded-xl p-4 border-2 border-[#444] flex items-center gap-4 min-h-[80px] shadow-[4px_4px_0px_#000] relative overflow-hidden">
+                        <div className="absolute inset-0 pointer-events-none opacity-5" 
+                                style={{ background: 'linear-gradient(to bottom, transparent 50%, rgba(255,255,255,0.1) 50%)', backgroundSize: '100% 4px' }}>
+                        </div>
+
+                        <div className="text-[#ffcc00] font-mono text-3xl font-bold shadow-black drop-shadow-[2px_2px_0px_rgba(0,0,0,1)] min-w-[3rem]">
+                            0{activeFeature + 1}
+                        </div>
+                        
+                        <div className="flex-1 z-10 overflow-hidden">
+                            <div className="text-gray-400 text-xs font-bold tracking-widest mb-1">{features[activeFeature].subtitle}</div>
+                            
+                            {Array.isArray(features[activeFeature].desc) ? (
+                            <div className="relative h-10 flex items-center">
+                                <div key={newsIndex} className="text-white text-sm md:text-base font-medium leading-tight animate-text-change">
+                                {features[activeFeature].desc[newsIndex]}
+                                </div>
+                            </div>
+                            ) : (
+                            <div className="text-white text-sm md:text-base font-medium leading-tight animate-text-change">
+                                {features[activeFeature].desc}
+                            </div>
+                            )}
+                        </div>
+
+                        {Array.isArray(features[activeFeature].desc) ? (
+                            <div className="flex gap-1 z-20">
+                            <button onClick={(e) => { e.stopPropagation(); cycleNews('prev'); }} className="p-1 hover:bg-[#333] rounded text-[#ffcc00] transition-colors"><ChevronLeft size={20}/></button>
+                            <button onClick={(e) => { e.stopPropagation(); cycleNews('next'); }} className="p-1 hover:bg-[#333] rounded text-[#ffcc00] transition-colors"><ChevronRight size={20}/></button>
+                            </div>
+                        ) : (
+                            <ArrowRight className="text-[#ffcc00] animate-pulse" />
+                        )}
+                        </div>
+                    </div>
+                    </div>
+
+                    {/* 右侧数据面板 */}
+                    <div className="w-full md:w-2/5 flex flex-col gap-6">
+                    
+                    <div className="flex justify-end gap-4">
+                        <button 
+                        onClick={handleReset}
+                        className="w-16 h-16 rounded-full bg-[#ff3333] border-4 border-[#2a2a2a] shadow-[6px_6px_0px_#000] flex items-center justify-center text-white hover:translate-y-1 hover:translate-x-1 hover:shadow-none transition-all active:bg-red-600 active:scale-95"
+                        title="Reset Timer"
+                        >
+                        <RotateCcw size={28} strokeWidth={3} />
+                        </button>
+                        <button 
+                        onClick={() => setShowLoading(true)}
+                        className="w-16 h-16 rounded-full bg-[#ff3333] border-4 border-[#2a2a2a] shadow-[6px_6px_0px_#000] flex items-center justify-center text-white hover:translate-y-1 hover:translate-x-1 hover:shadow-none transition-all active:bg-red-600"
+                        >
+                        <Menu size={28} strokeWidth={3} />
+                        </button>
+                    </div>
+
+                    <div className="bg-[#4a4a5e] rounded-[2rem] p-2 shadow-[12px_12px_0px_#000000] border-4 border-[#2a2a2a] relative">
+                        <div className="absolute -top-5 left-8 bg-[#808080] text-[#2a2a2a] px-4 py-1 rounded-t-lg font-bold text-sm border-t-4 border-x-4 border-[#2a2a2a]">
+                        核心参数库
+                        </div>
+                        
+                        <div className="absolute top-4 right-4 text-[#ff3333] opacity-80 font-black text-4xl transform -rotate-12 pointer-events-none z-20" style={{ textShadow: '2px 2px 0px #000' }}>
+                        TOP SPEC
+                        </div>
+
+                        <div className="bg-[#5a5a6e] rounded-[1.5rem] p-4 border-2 border-[#3a3a4a]">
+                        <div className="grid grid-cols-3 gap-2">
+                            {specs.map((spec, idx) => (
+                            <div 
+                                key={idx} 
+                                onClick={() => handleSpecClick(idx)}
+                                className={`aspect-square bg-[#3a3a4a] rounded-xl relative group hover:bg-[#2a2a2a] transition-all border-2 border-[#2a2a2a] flex flex-col items-center justify-center cursor-pointer overflow-visible shadow-[2px_2px_0px_rgba(0,0,0,0.5)] active:scale-95 select-none
+                                ${activeSpecIndex === idx ? 'animate-subtle-blink' : ''}
+                                `}
+                            >
+                                <div className="absolute inset-0 flex items-center justify-center opacity-10 pointer-events-none">
+                                <X size={64} />
+                                </div>
+                                
+                                <div className="text-gray-400 text-[10px] font-bold tracking-widest mb-1 z-10">{spec.label}</div>
+                                <div className="text-white font-black text-xl z-10 group-hover:text-[#ffcc00] transition-colors drop-shadow-[2px_2px_0px_rgba(0,0,0,1)]">{spec.value}</div>
+                                
+                                {/* ✨ 参数解析浮窗 */}
+                                {specAnalysis && activeSpecIndex === idx && (
+                                    <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-4 w-48 z-50 animate-pop-in">
+                                        <div className="bg-[#2a2a2a] border-2 border-[#ffcc00] p-3 rounded-lg shadow-lg relative">
+                                            <div className="text-[10px] text-[#ffcc00] font-mono leading-tight">
+                                                <span className="animate-pulse">▶ </span>
+                                                {specAnalysis}
+                                            </div>
+                                            {/* 箭头 */}
+                                            <div className="absolute -bottom-2 left-1/2 -translate-x-1/2 w-4 h-4 bg-[#2a2a2a] border-b-2 border-r-2 border-[#ffcc00] rotate-45"></div>
+                                        </div>
+                                    </div>
+                                )}
+                                
+                                <div className="absolute top-1 left-1 w-2 h-2 border-t-2 border-l-2 border-transparent group-hover:border-[#ffcc00] transition-all"></div>
+                                <div className="absolute bottom-1 right-1 w-2 h-2 border-b-2 border-r-2 border-transparent group-hover:border-[#ffcc00] transition-all"></div>
+                            </div>
+                            ))}
+                            
+                            {/* Expand Button Console */}
+                            <div className="aspect-square bg-[#2a2a2a] rounded-xl col-span-1 flex flex-col p-1 border-2 border-black shadow-[2px_2px_0px_rgba(0,0,0,0.5)] overflow-hidden">
+                            <div className="flex-1 bg-[#3a3a3a] rounded mb-1 flex items-center justify-center relative overflow-hidden px-1">
+                                {colorCodeText ? (
+                                    <div className="text-[10px] text-green-400 font-mono font-bold leading-tight break-all text-center">
+                                    {colorCodeText}
+                                    </div>
+                                ) : expansionLog ? (
+                                <div className="absolute inset-0 bg-green-900/50 p-1 flex items-center justify-center">
+                                    <div className="text-[10px] text-green-400 font-mono leading-tight text-center break-words uppercase animate-pulse">
+                                    {expansionLog}
+                                    </div>
+                                </div>
+                                ) : (
+                                <Terminal size={20} className="text-gray-500" />
+                                )}
+                            </div>
+                            
+                            <button 
+                                onClick={handleExpansion}
+                                disabled={isExpanding}
+                                className="h-8 bg-[#ffcc00] rounded flex items-center justify-center text-black font-black text-xs cursor-pointer hover:bg-yellow-300 border border-black hover:shadow-inner transition-colors disabled:opacity-50"
+                            >
+                                {isExpanding ? "..." : "扩容"}
+                            </button>
+                            </div>
+                            
+                            {/* Color Switch Buttons */}
+                            <div className="aspect-square grid grid-cols-2 gap-1">
+                            <button 
+                                onClick={() => handleColorChange('prev')}
+                                className="bg-[#2a2a2a] rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-black border-2 border-[#333] hover:border-gray-500 shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-[2px] active:translate-x-[2px] transition-all"
+                            >
+                                ◀
+                            </button>
+                            <button 
+                                onClick={() => handleColorChange('next')}
+                                className="bg-[#2a2a2a] rounded-lg flex items-center justify-center text-gray-400 hover:text-white hover:bg-black border-2 border-[#333] hover:border-gray-500 shadow-[2px_2px_0px_#000] active:shadow-none active:translate-y-[2px] active:translate-x-[2px] transition-all"
+                            >
+                                ▶
+                            </button>
+                            </div>
+
+                            <button 
+                            onClick={() => setShowChat(true)}
+                            className="aspect-square bg-[#3a3a4a] rounded-xl flex items-center justify-center border-2 border-[#2a2a2a] text-gray-600 shadow-[inset_2px_2px_4px_rgba(0,0,0,0.2)] hover:bg-[#2a2a2a] hover:text-[#ffcc00] transition-colors"
+                            >
+                                <span className="font-bold text-xl">?</span>
+                            </button>
+                        </div>
+                        </div>
+                    </div>
+
+                    <button 
+                        onClick={() => setShowModal(true)}
+                        className="w-full bg-[#1e40af] text-white font-black italic text-xl py-4 rounded-xl border-4 border-black shadow-[8px_8px_0px_#000] hover:translate-x-[4px] hover:translate-y-[4px] hover:shadow-[4px_4px_0px_#000] active:translate-x-[8px] active:translate-y-[8px] active:shadow-none transition-all flex items-center justify-center gap-3 hover:bg-[#ffcc00] hover:text-black"
+                    >
+                        <span className="bg-white text-[#1e40af] px-2 text-sm rounded font-bold border-2 border-[#1e40af]">Gemini</span>
+                        立即体验 PRO
+                    </button>
+
+                    </div>
+                </div>
+                </div>
+            );
+        }
+
+        const root = createRoot(document.getElementById('root'));
+        root.render(<Gemini3ProShowcase />);
+    </script>
+</body>
+</html>
